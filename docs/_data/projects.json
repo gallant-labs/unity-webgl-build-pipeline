@@ -1,0 +1,16 @@
+{
+  "projects": [
+    {
+      "team_name": "Team0",
+      "game_title": "Demo Game",
+      "gdd_link": "https://docs.google.com/document/d/17LUfBBCPN77oMFypf7y_GiEuCyhmSE1nkH9ZKKtBiAI/view",
+      "latest_release_notes": "https://github.com/CRB-GDI/skillsusaproject-team-alpha/releases/latest",
+      "release_webgl": "http://crb-gdi.github.io/24-25-Student-Projects/q3Projects/TeamAlpha/V.0.1/index.html",
+      "latest_qa_build": "http://crb-gdi.github.io/24-25-Student-Projects/q3Projects/TeamAlpha/auto-deploy-latest/index.html",
+      "bug_report_link": "https://github.com/CRB-GDI/skillsusaproject-team-alpha/issues",
+      "draft_release_notes": "https://github.com/CRB-GDI/skillsusaproject-team-alpha/releases/tag/v1.0.18",
+      "latest_draft_release_tag": "v1.0.18",
+      "latest_published_release_tag": "V.0.1"
+    }
+  ]
+}
