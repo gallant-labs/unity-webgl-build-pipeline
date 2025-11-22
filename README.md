@@ -1,31 +1,22 @@
-# UnityProjectTemplate
-Use this template for game projects built in Unity
+# 🌐 Unity WebGL Build Pipeline (GitHub Actions CI/CD)
+**Automated Unity WebGL build & deployment workflow using GitHub Actions, supporting both single-repo and cross-repo publishing.**
 
-**NOTE:** This repository template is configured to use LFS for *.blend, *.psd, *.tiff, and *.tif files.   To add additional files to the LFS storage use the command
-git lfs track
+# 🎯 Overview
 
-## If you have already created your Unity project locally
-1. Create a new repository using this repository as a template. 
->* Select "Use this template".  
->* Name the new repository the same name you used for the existing Unity Project name followed by -Repo.   
-3. Using Git GUI, _Clone existing repository_  to clone this repository to your desktop
-4. Copy the existing Unity project folder into the cloned _Unity Project_-Repo directory.  It should end up as a folder at the same level as the Art and Design folders, nested within the repository folder.
-5. Move the **_UnityProjectRoot.gitignore** file into your **Unity project** folder AND rename to **.gitignore**
-6. In Git GUI, click **Rescan**.  Make sure that your project files show up and number of files is reasonable (should **not** be 10's of thousands of files)
-7. Click **Stage changed**
-8. Add a meaningful commit message such as "Initial commit of _project name_" and click **Commit**
-9. Click **Push** to push the committed changes to GitHub.  _Remember you'll need to go to GitHub to create, review and merge a pull request on GitHub.com to finish applying your commits to the repository._
-11. Continue working locally and committing frequently.  You should **at least** do one COMMIT **and** one PUSH per class period.  More is better!
+This repository demonstrates an automated pipeline for building and deploying Unity WebGL projects using **GitHub Actions**.
 
-## If you have NOT created your Unity project locally yet
-1. Create a new repository using this repository as a template. 
->* Select "Use this template".  
->* Name the new repository the same name you'll use for your Unity Project name followed by -Repo.
-3. Using Git GUI, Clone the new repository to your desktop
-4. In the Unity Hub, create a new project with same name as the repository minus the -Repo.  Be sure to set the location for the project as the new Repo folder.  This way the new Unity project will be created __inside__ the repository folder, at same level as Art and Design folders.
-5. Once the project opens in Unity, go to File Explorer and Move the **_UnityProjectRoot.gitignore** file up into your **Unity project** folder and rename to **.gitignore**
-7. In Git GUI, click **Rescan**.  Make sure that your project files show up and number of files is reasonable (should **not** be 10's of thousands of files)
-8. Click **Stage changed**
-9. Add a meaningful commit message such as "Initial commit of _project name_" and click **Commit**  _Note: If you may need to close the Unity project. 
-10. Click **Push** to push the committed changes to GitHub.  _Remember you'll need to go to GitHub to create, review and merge a pull request on GitHub.com to finish applying your commits to the repository._
-11. Continue working locally and committing frequently.  You should **at least** do one COMMIT **and** one PUSH per day to minimize risk of lost work.  
+Originally designed for a **high school Game Design & Implementation course**, this workflow enabled students to publish playable WebGL builds while keeping their source code **private**. The build artifacts were deployed to a **separate public repo**, creating a secure classroom showcase site.
+
+This portfolio version presents:
+
+1. A simplified single-repository Pages deployment, and
+2. Documentation on the original multi-repo private → public publishing pattern.
+   
+# 🚀 Features
+* Unity WebGL automated build using GitHub Actions
+* Zero local setup required — builds run fully in CI
+* GitHub Pages automatic deployment (same-repo mode)
+* Cross-repo deployment support (private project → public build repo)
+* Configurable via GitHub Secrets (no hardcoded paths or credentials)
+* Repeatable, educator-friendly workflow
+* Scalable for classroom or team environments
