@@ -1,0 +1,337 @@
+name: Update json file
+
+
+on: 
+    workflow_dispatch:  # Allow manual execution of the workflow via GitHub UI
+
+concurrency:
+    group: ${{ github.workflow }}-${{ github.ref }}  # Ensure unique group per branch
+    cancel-in-progress: true  # Cancel any currently running instance on the same branch
+
+permissions: 
+  contents: write
+
+env:
+    GH_PAT: ${{ secrets.GH_STUDENT_PROJECT_REPO_PAT }}  # Personal Access Token for cross-repo deployments
+    EXT_REPO: ${{ vars.STUDENT_PROJECTS_REPO }}  # External repository for deployment
+    PROJECT_PATH: ${{ vars.PROJECT_PATH }}
+    TEAM_NAME: ${{ vars.TEAM_NAME }}
+
+jobs:
+  update_metadata_here:
+    name: Update the release values for this project's JSON file entry
+    runs-on: ubuntu-latest
+
+    outputs:
+      latest_draft_tag: ${{ steps.get_draft.outputs.draft }}
+      latest_release_tag: ${{ steps.get_release.outputs.release }}
+
+    steps:
+    #DEBUG Step 1: Confirm the contents of the working directory
+      - name: Check dir
+        id: check_dir
+        shell: bash
+        run: |
+          echo "this-repo-name = ${{ env.this-repo-name }}"
+          echo "GITHUB_WORKSPACE value: "
+          echo $GITHUB_WORKSPACE
+          echo "Current working directory is: "
+          pwd
+          echo "Confirm contents of working directory..."
+          ls -la
+
+    # Step 1: Checkout this repository branch to an absolute path in workspace
+      - name: Checkout THIS-Repository
+        id: checkout-this
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          path: "${{ github.workspace }}/THIS-repository"
+          ref: ${{ github.ref }}
+
+    # Step 3: Get Tag of the Latest Published Release for THIS-repository
+      - name: Get Latest Published Release Tag
+        id: get_release
+        run: |
+          API_URL="https://api.github.com/repos/${{ github.repository }}/releases/latest"
+          RESPONSE=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" $API_URL)
+          RELEASE=$(echo "$RESPONSE" | jq -r '.tag_name')
+
+          if [ "$RELEASE" == "null" ]; then
+            echo "No published releases found."
+            RELEASE=""
+          else
+            echo "Latest published release tag: $RELEASE"
+          fi
+          echo "latest_release_tag=$RELEASE" >> $GITHUB_OUTPUT
+
+      # Step 4: Get Tag of the Most Recent Draft Release for THIS-repository
+      - name: Get Most Recent Draft Release
+        id: get_draft
+        run: |
+          API_URL="https://api.github.com/repos/${{ github.repository }}/releases"
+          RESPONSE=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" $API_URL)
+          DRAFT=$(echo "$RESPONSE" | jq -r '.[] | select(.draft == true) | .tag_name' | head -n 1)
+
+          if [ -n "$DRAFT" ]; then
+            echo "Found draft release with tag: $DRAFT"
+            echo "latest_draft_tag=$DRAFT" >> $GITHUB_OUTPUT
+          else
+            echo "No draft release found."
+            echo "latest_draft_tag=" >> $GITHUB_OUTPUT
+          fi
+
+    # DEBUG Step 2: Confirm the contents of the working directory
+      - name: Check dir after checkout this repo
+        id: check_dir2
+        shell: bash
+        run: |
+          echo " Environment variable this-repo-name=${{ env.this-repo-name }}"
+          echo " Repository variable vars.PROJECT_PATH=${{ vars.PROJECT_PATH }}"
+          echo "GITHUB_WORKSPACE value: "
+          echo $GITHUB_WORKSPACE
+          echo "Current working directory is: "
+          pwd
+          echo "Confirm contents of working directory..."
+          ls -la       
+          echo " ls -la THIS-repository"
+          ls -la $GITHUB_WORKSPACE/THIS-repository
+          echo "Confirm contents of THIS-repository Pages data files directory..."
+          ls -la $GITHUB_WORKSPACE/THIS-repository/docs/_data
+          # cd THIS-repository/docs/_data || { echo "Failed to navigate to THIS-repository/docs/_data."; exit 1; }
+          # if [ ! -f projects.json ]; then
+          #     echo "'projects.json' file not found."
+          #     exit 1
+          # fi
+          echo "Current working directory is:"
+          pwd
+          echo "Confirm contents of working directory..."
+          ls -la
+          
+      - name: Modify JSON Metadata in THIS-repository
+        id: modThisJson
+        run: |
+           echo "Switching to THIS-repository Pages data files location..."
+           cd $GITHUB_WORKSPACE/THIS-repository/docs/_data || { echo "Failed to navigate to THIS-repository/docs/_data."; exit 1; }
+           if [ ! -f projects.json ]; then
+              echo "'projects.json' file not found."
+              exit 1
+           fi
+
+           echo "Displaying JSON contents before update...."
+           jq '.' projects.json
+               
+           echo "Extracting JSON entry for team: ${TEAM_NAME}..."
+           UPDATED_ENTRY=$(jq -r --arg team "${TEAM_NAME}" \
+                            '.projects[] | select(.team_name == $team)' \
+                            projects.json 2> error.log)
+           if [ $? -ne 0 ]; then
+              echo "Error extracting JSON entry. Check error.log for details."
+              cat error.log
+              exit 1
+           fi
+
+           echo "Updating JSON metadata..."
+           DRAFT_TAG="${{ steps.get_draft.outputs.latest_draft_tag }}"
+           RELEASE_TAG="${{ steps.get_release.outputs.latest_release_tag }}"
+           RELEASE_WEBGL="http://crb-gdi.github.io/24-25-Student-Projects/q3Projects/${TEAM_NAME}/$RELEASE_TAG/index.html"
+           DRAFT_RELEASE_NOTES="https://github.com/${{ github.repository }}/releases/tag/$DRAFT_TAG"
+
+           jq --arg team "${TEAM_NAME}" \
+              --arg draft_notes "$DRAFT_RELEASE_NOTES" \
+              --arg latest_draft "$DRAFT_TAG" \
+              --arg latest_release "$RELEASE_TAG" \
+              --arg webgl "$RELEASE_WEBGL" \
+              '.projects |= map(if .team_name == $team then . + {draft_release_notes: $draft_notes, latest_draft_release_tag: $latest_draft, latest_published_release_tag: $latest_release, release_webgl: $webgl} else . end)' \
+              projects.json > temp.json && mv temp.json projects.json
+
+           echo "Displaying JSON contents after update...."
+           jq '.' projects.json
+
+           echo "Committing JSON changes..."
+           cd $GITHUB_WORKSPACE/THIS-repository
+           echo "Current working directory is..."
+           pwd
+           echo "Confirming contents of working directory"
+           ls -la
+           echo "Reporting git status info..."
+           git status
+           git config --local user.name "github-actions[bot]"
+           git config --local user.email "github-actions[bot]@users.noreply.github.com"
+           git add docs/_data/projects.json
+           git commit -m "Update JSON metadata for ${TEAM_NAME}" || echo "No changes to commit."
+           git push origin ${GITHUB_REF} || echo "No changes to push."
+
+  update_metadata_there:
+    name: Update JSON Entry in External Repository
+    runs-on: ubuntu-latest
+    needs: update_metadata_here
+
+    steps:
+      # Step 1: Checkout this repository branch to absolute path
+      - name: Checkout THIS-repository
+        id: checkout-this
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          path: "${{ github.workspace }}/THIS-repository"
+          ref: ${{ github.ref }}
+
+      # DEBUG: Confirm the contents of the working directory
+      - name: Check dir after checkout this repo
+        id: check_dir2
+        shell: bash
+        run: |
+          echo " Environment variable this-repo-name=${{ env.this-repo-name }}"
+          echo " Repository variable vars.PROJECT_PATH=${{ vars.PROJECT_PATH }}"
+          echo "GITHUB_WORKSPACE value: "
+          echo $GITHUB_WORKSPACE
+          echo "Current working directory is: "
+          pwd
+          echo "Confirm contents of working directory..."
+          ls -la       
+          echo " ls -la THIS-repository"
+          ls -la $GITHUB_WORKSPACE/THIS-repository
+          echo "Switching to THIS-repository Unity project location..."
+          ls -la $GITHUB_WORKSPACE/THIS-repository/docs/_data
+          #cd THIS-repository/docs/_data || { echo "Failed to navigate to THIS-repository/docs/_data."; exit 1; }
+          #if [ ! -f projects.json ]; then
+          #    echo "'projects.json' file not found."
+          #    exit 1
+          #fi
+          echo "Current working directory is:"
+          pwd
+          echo "Confirm contents of working directory..."
+          ls -la
+
+           
+      - name: Checkout External Repository to an absolute path
+        id: checkout-ext
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.EXT_REPO }}
+          token: ${{ secrets.GH_STUDENT_PROJECT_REPO_PAT }}
+          path: "${{ github.workspace }}/central-repository"
+          ref: gh-pages
+
+     # DEBUG:: Confirm the contents of the working directory
+      - name: Check dir after checkout central repo
+    #    if: true == false
+        id: check_dir3
+        shell: bash
+        run: |
+          echo "GITHUB_WORKSPACE value: "
+          echo $GITHUB_WORKSPACE
+          echo "Current working directory is: "
+          pwd
+          echo "Confirm contents of working directory..."
+          ls -la       
+          echo " ls -la THIS-repository"
+          ls -la THIS-repository
+          echo "Current working directory is: "
+          pwd
+              echo "Confirm contents of working directory..."
+          ls -la
+          echo "Switching to central-repository..."
+            cd $GITHUB_WORKSPACE/central-repository || { echo "Failed to navigate to central-repository"; exit 1; }
+            echo "Current working directory is:"
+            pwd
+            echo "Confirming contents of working directory..."
+            ls -la
+
+            echo "Switching to central-repository/docs..."
+            cd $GITHUB_WORKSPACE/central-repository/docs || { echo "Failed to navigate to central-repository/docs"; exit 1; }
+            echo "Current working directory is:"
+            pwd
+            echo "Confirming contents of working directory..."
+            ls -la
+
+            echo "Switching to central-repository/docs/_data..."
+            cd $GITHUB_WORKSPACE/central-repository/docs/_data || { echo "Failed to navigate to central-repository/docs/_data"; exit 1; }
+            echo "Current working directory is:"
+            pwd
+            echo "Confirming contents of working directory..."
+            ls -la
+
+     # Update the updated JSON metadata entry into the Central Repository's JSON file
+      - name: Update JSON Entry in External Repository
+        run: |
+            # Debugging step: List directory contents
+            echo "Checking directory contents at $GITHUB_WORKSPACE..."
+            ls -la $GITHUB_WORKSPACE
+            echo "Checking directory contents at $GITHUB_WORKSPACE..."
+            ls -la $GITHUB_WORKSPACE
+            
+            echo "Looking for 'THIS-repository' inside the workspace..."
+            ls -la $GITHUB_WORKSPACE/THIS-repository
+            
+            echo "Switching context to THIS-repository pages data location..."
+            cd $GITHUB_WORKSPACE/THIS-repository/docs/_data || { echo "Failed to navigate to THIS-repository/docs/_data."; exit 1; }
+            if [ ! -f projects.json ]; then
+              echo "'projects.json' file not found in THIS-repository."
+              exit 1
+            fi
+
+            echo "Extracting entry for team: ${TEAM_NAME}..."
+            UPDATED_ENTRY=$(jq -r --arg team "${TEAM_NAME}" \
+                            '.projects[] | select(.team_name == $team)' \
+                            projects.json 2> error.log)
+            if [ $? -ne 0 ]; then
+              echo "Error extracting JSON entry. Check error.log for details."
+              cat error.log
+              exit 1
+            fi
+
+            # Debugging step: List directory contents
+            echo "Checking directory contents at $GITHUB_WORKSPACE/central-repository..."
+            ls -la $GITHUB_WORKSPACE/central-repository
+            
+                      
+            echo "Switching to central-repository..."
+            cd $GITHUB_WORKSPACE/central-repository || { echo "Failed to navigate to central-repository"; exit 1; }
+            echo "Current working directory is:"
+            pwd
+            echo "Confirming contents of working directory..."
+            ls -la
+
+            echo "Switching to central-repository/docs..."
+            cd $GITHUB_WORKSPACE/central-repository/docs || { echo "Failed to navigate to central-repository/doc"; exit 1; }
+            echo "Current working directory is:"
+            pwd
+            echo "Confirming contents of working directory..."
+            ls -la
+
+            echo "Switching to central-repository/docs/_data..."
+            cd $GITHUB_WORKSPACE/central-repository/docs/_data || { echo "Failed to navigate to central-repository/docs/_data"; exit 1; }
+            echo "Current working directory is:"
+            pwd
+            echo "Confirming contents of working directory..."
+            ls -la
+            
+            if [ ! -f projects.json ]; then
+              echo "'projects.json' file not found in central-repository."
+              exit 1
+            fi
+
+            echo "Displaying central-repository JSON contents before update...."
+            jq '.' projects.json
+
+            echo "Updating entry for team: ${TEAM_NAME} in central-repository..."
+            jq --argjson updated "$UPDATED_ENTRY" \
+               --arg team "${TEAM_NAME}" \
+               '.projects |= map(if .team_name == $team then $updated else . end)' \
+               projects.json > temp.json && mv temp.json projects.json
+
+            echo "Displaying central-repository JSON contents after update...."
+            jq '.' projects.json
+            
+            echo "Committing JSON changes..."
+            cd $GITHUB_WORKSPACE/central-repository
+            echo "Checking Git hub status"
+            git status
+            git config --local user.name "github-actions[bot]"
+            git config --local user.email "github-actions[bot]@users.noreply.github.com"
+            git add docs/_data/projects.json
+            git commit -m "Update JSON metadata for ${TEAM_NAME}" || echo "No changes to commit."
+            git push origin gh-pages || echo "No changes to push."
