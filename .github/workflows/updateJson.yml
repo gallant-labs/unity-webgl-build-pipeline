@@ -1,3 +1,4 @@
+# This workflow automatically updates key metadata about this repository used by the build-and-deploy action workflow
 name: Update json file
 
 
@@ -14,11 +15,11 @@ permissions:
 env:
     GH_PAT: ${{ secrets.GH_STUDENT_PROJECT_REPO_PAT }}  # Personal Access Token for cross-repo deployments
     EXT_REPO: ${{ vars.STUDENT_PROJECTS_REPO }}  # External repository for deployment
-    PROJECT_PATH: ${{ vars.PROJECT_PATH }}
-    TEAM_NAME: ${{ vars.TEAM_NAME }}
+    PROJECT_PATH: ${{ vars.PROJECT_PATH }} # The relative path of the Unity project to be built/deployed
+    TEAM_NAME: ${{ vars.TEAM_NAME }} # The team name used to properly target destination folder and label(s) in deployment detination
 
 jobs:
-  update_metadata_here:
+  update_metadata_here: # This job acts on this repository
     name: Update the release values for this project's JSON file entry
     runs-on: ubuntu-latest
 
@@ -162,7 +163,7 @@ jobs:
            git commit -m "Update JSON metadata for ${TEAM_NAME}" || echo "No changes to commit."
            git push origin ${GITHUB_REF} || echo "No changes to push."
 
-  update_metadata_there:
+  update_metadata_there: # This job acts on the external repository (destination where pages site is)
     name: Update JSON Entry in External Repository
     runs-on: ubuntu-latest
     needs: update_metadata_here
