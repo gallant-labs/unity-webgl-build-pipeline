@@ -1,0 +1,634 @@
+name: SemVer Update Build and Deploy (ai)
+
+# Trigger workflow on pushes to a QA branch or through manual dispatch
+on: 
+    push:   # Automatically run when a push occurs
+        branches:
+            - '**qa**'  # Match branches containing 'qa' in their name
+            - '**QA**'
+            - '**Qa**'
+            - '**qA**'
+    workflow_dispatch:  # Allow manual execution of the workflow via GitHub UI
+
+# Apply concurrency settings (only along one instance of this workflow to run at a time on the same branch)
+concurrency:
+
+    group: ${{ github.workflow }}-${{ github.ref }}  # Ensure unique group per branch
+    cancel-in-progress: true  # Cancel any currently running instance on the same branch
+    
+# Define permissions required for repository operations
+permissions: 
+    contents: write
+
+# Define global environment variables
+env:
+    # Secrets and variables for Unity project and repository configurations
+    UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}   
+    UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+    UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+    GH_PAT: ${{ secrets.GH_STUDENT_PROJECT_REPO_PAT }}  # Personal Access Token for cross-repo deployments
+    EXT_REPO: ${{ vars.STUDENT_PROJECTS_REPO }}  # External repository for deployment
+
+    # Project-specific settings
+    PROJECT_PATH: ${{ vars.PROJECT_PATH }}  
+    TEAM_NAME: ${{ vars.TEAM_NAME }}
+
+# Job to check if there are changes in the Unity project directory
+jobs:
+    check:
+        name: Check for Unity Changes
+        runs-on: ubuntu-latest
+        outputs:
+            should_build: ${{ steps.check_changes.outputs.has_changes }}  # Output to determine if project has changed
+           # original_version: ${{ steps.package_version.outputs.version }}  # Output the existing Unity version
+
+        steps:
+            # Step 1: Checkout the code
+            - name: Checkout Code
+              uses: actions/checkout@v4
+              with:
+                  fetch-depth: 0  # Fetch the entire history
+
+            # DEBUG : Validate working directory
+            - name: Debug Working Directory
+              run: |
+                  echo "Root working directory: " 
+                  pwd
+                  echo "Checking contents of working directory: "
+                  ls -la 
+
+            # Step 2: Include Display of Commit Details
+            - name: Check for Changes in Project Path
+              id: check_changes
+              run: |
+                # Echo the current and previous commit hashes for debugging
+                echo "PROJECT_PATH is set to: ${{ env.PROJECT_PATH }}"
+                echo "Current working directory: $(pwd)"
+
+                # Display commit details
+                echo "Comparing commits:"
+                echo "Current (HEAD) commit: $(git rev-parse --short HEAD)" 
+                echo "Previous commit: $(git rev-parse --short HEAD^)"
+                git log -1 HEAD -- "${{ env.PROJECT_PATH }}"
+                git diff HEAD^ HEAD --name-only # Print output for better debugging        
+                    
+                # Check for changes and set the output variable
+                bash
+                if [ -n "$(git diff HEAD^ HEAD --name-only -- "${{ vars.PROJECT_PATH }}")" ]; then
+                  echo "has_changes=true" >> $GITHUB_OUTPUT
+                else
+                  echo "has_changes=false" >> $GITHUB_OUTPUT
+                fi
+    
+
+          # Step 3: Report whether changes are detected
+            - name: Report if Changes
+              run: |
+                 if [ "${{ steps.check_changes.outputs.has_changes }}" == 'false' ]; then
+                      echo 'No changes found in Unity project ${{ vars.PROJECT_PATH }} Do not update Unity version, use the current version value'
+                  else
+                      echo 'Changes found in Unity project ${{ vars.PROJECT_PATH }}.  Update the Unity version by incrementing the patch value'
+                  fi
+             
+            # Step 4: Get the current Unity project version from ProjectSettings.asset
+            - name: Get Version
+              id: package_version
+              uses: KageKirin/get-unity-bundle-version@v1
+              with:
+                  file: "${{ env.PROJECT_PATH }}/ProjectSettings/ProjectSettings.asset"
+
+            # Step 5: Print the Unity project's current version to logs
+            - name: Show Original Unity Project Version
+              run: |
+                  echo "Original Unity project version is: ${{ steps.package_version.outputs.version }}"
+                  echo "original_version=${{ steps.package_version.outputs.version }}" >> $GITHUB_OUTPUT
+
+# Job to update semantic versioning (SemVer)
+    update:
+        name: Update SemVer
+        needs: [check]  # Dependent on the check job
+        runs-on: ubuntu-latest
+        outputs:
+            semver_string: ${{ steps.semver_update.outputs.semver-string }} # Output the updated SemVer value
+
+        steps:
+            # Step 0: Echo back has_changes value
+            - name: Variable echoes
+              run: |
+                  echo "DEBUGGING MESSAGES START HERE"
+                  echo "Value of needs.check.outputs.has_changes is ${{ needs.check.outputs.has_changes  }}"
+                  echo "Value of original version is ${{ needs.check.outputs.original_version }}"
+                
+            # Step 1: Check out the repository code
+            - name: Checkout Code
+              uses: actions/checkout@v4
+
+            # Step 2: Increment Unity project's version based on SemVer rules
+            - name: Find ProjectSettings.asset & Increment Version
+              uses: AlexStormwood/UnityAutomatedSemver@v2.0.0
+              id: semver_update
+              with:
+                updateMode: "patch"  # Increment PATCH version (e.g., 1.0.1 → 1.0.2)
+                projectSettingsPath: "${{ env.PROJECT_PATH }}/ProjectSettings/ProjectSettings.asset"
+                useBundleVersionForAll: true
+                bundleVersion: "{major}.{minor}.{patch}"
+
+            # Step 3: Validate and log the updated SemVer version
+            - name: Validate SemVer Update
+              if: steps.semver_update.outputs.semver-string != null
+              run: |
+                echo "New SemVer number is: ${{ steps.semver_update.outputs.semver-string }}"
+                echo "Full SemVer data is: ${{ steps.semver_update.outputs.semver-full-data }}"
+                echo "DEBUGGING: needs.check.outputs.has_changes = ${{ needs.check.outputs.has_changes }}"
+                echo "DEBUGGING: needs.check.outputs.original_version = ${{ needs.check.outputs.original_version }}"
+
+            # Step 4: Commit & push the updated semver number back into the repo if there were changes
+            - name: Commit and Push Changes
+             # if: needs.check.outputs.has_changes == 'true' 
+              run: |
+                  echo "Update semver to ${{ steps.semver_update.outputs.semver-string }}"
+                  git status
+                  git config --global user.name "github-actions[bot]"
+                  git config --global user.email "github-actions[bot]@users.noreply.github.com"
+                  git add .
+                  git status
+                  git commit -m "Updated semantic version in project settings to ${{ steps.semver_update.outputs.semver-string }}" --no-verify --signoff || echo "No changes to commit"
+                  git push
+                  git status
+  
+
+# Job to create a Git tag for the updated version
+    addTag:
+        name: Add Tag for Build Version
+        needs: [check, update]  # Depends on check and update jobs
+        runs-on: ubuntu-latest
+        outputs:
+            build_version: ${{ steps.set_build_version.outputs.build_version }} # Output the final build version
+
+        steps:
+            # Step 0: Echo back has_changes value
+            - name: Variable echoes
+              run: |
+                  echo "DEBUGGING MESSAGES START HERE"
+                  echo "Value of needs.update.result is ${{ needs.update.result }}"
+                  echo "Value of needs.check.result is ${{ needs.check.result }}"
+                  echo "Value of needs.check.outputs.original_version is ${{ needs.check.outputs.original_version }}"
+                  echo "Value of needs.update.outputs.semver_string is ${{ needs.update.outputs.semver_string }}"
+                  
+            # Step 1: Check out the repository with full Git history to create Git tags
+            - name: Checkout Repository
+              uses: actions/checkout@v4
+              with:
+                  fetch-depth: 0  # Fetch full Git history
+
+            # Step 2: Determine the final build version
+            - name: Set Build Version Output
+              id: set_build_version
+              run: |
+                  UPDATE_RESULT="${{ needs.update.result }}"
+                  ORIGINAL_VERSION="${{ needs.check.outputs.original_version }}"
+                  SEMVER_STRING="${{ needs.update.outputs.semver_string }}"
+                  if [ "$UPDATE_RESULT" == "success" ]; then
+                      [ -n "$SEMVER_STRING" ] && BUILD_VERSION="$SEMVER_STRING" || BUILD_VERSION="New version unknown"
+                  else
+                      [ -n "$ORIGINAL_VERSION" ] && BUILD_VERSION="$ORIGINAL_VERSION" || BUILD_VERSION="Current version unknown"
+                  fi
+                  echo "build_version=${BUILD_VERSION}" >> $GITHUB_OUTPUT
+                  echo "Build version set to: $BUILD_VERSION"
+
+            # Step 3: Create and push a Git tag for the determined build version
+            - name: Create and Push Tag
+              run: |
+                echo "DEBUGGING MESSAGES START HERE"
+                echo "Current working directory is: "
+                pwd
+                echo "Contents of working directory is:"
+                ls -la
+                echo "Value of needs.update.result is ${{ needs.update.result }}"
+                echo "Value of needs.check.result is ${{ needs.check.result }}"
+                echo "Value of needs.check.outputs.original_version is ${{ needs.check.outputs.original_version }}"
+                echo "Value of needs.update.outputs.semver_string is ${{ needs.update.outputs.semver_string }}"
+                echo "Value of steps.set_build_version.outputs.build_version is ${{ steps.set_build_version.outputs.build_version }}"
+                
+                TAG_NAME="v${{ steps.set_build_version.outputs.build_version }}"
+                if git ls-remote --tags origin | grep -q "$TAG_NAME"; then
+                  echo "Tag $TAG_NAME already exists remotely. Skipping tag creation."
+                else
+                  echo "Creating tag $TAG_NAME"
+                  git config user.email "action@github.com"
+                  git config user.name "GitHub Action"
+                  git tag -a "$TAG_NAME" -m "Draft release $TAG_NAME created by workflow run ${{ github.run_number }}"
+                  git push origin "$TAG_NAME"
+                fi
+
+# Job to build the project for WebGL platform
+    buildWebGL:
+        needs: [addTag]  # Build is triggered after AddTag
+        name: Build for WebGL 🖥️
+        runs-on: ubuntu-latest
+
+        steps:
+            # Step 1: Check out the repository code
+            - name: Checkout Code
+              uses: actions/checkout@v4
+              with:
+                  lfs: true  # Enable Git LFS support to handle large files
+                  ref: ${{ github.ref }}
+
+            # Step 2: Ensure proper Git LFS cache for improved performance
+            - name: Restore LFS Cache
+              uses: actions/cache@v3
+              with:
+                  path: ${{ env.PROJECT_PATH }}/.git/lfs
+                  key: ${{ runner.os }}-lfs-${{ hashFiles(format('{0}/.gitattributes', env.PROJECT_PATH)) }}
+
+            # Step 3: Pull large Git LFS files
+            - name: Git LFS Pull
+              run: |
+                git lfs pull || { echo "LFS pull failed."; exit 1; }
+
+            # Step 4: Build Unity project as WebGL
+            - name: Build Project
+              uses: game-ci/unity-builder@v4
+              id: webGlBuildStep
+              with:
+                  targetPlatform: WebGL  # Target build for WebGL platform
+                  projectPath: ${{ env.PROJECT_PATH }}  # Path to Unity project
+                  versioning: None  # Disable default versioning to rely on custom SemVer
+
+            # Step 5: Upload the build for further deployment steps
+            - uses: actions/upload-artifact@v4
+              with:
+                  name: build-WebGL
+                  path: build/WebGL
+
+# Job to deploy the build to this External GitHub Pages
+    deployPages:
+        needs: [buildWebGL]  # Deployment depends on build 
+        name: Deploy to GitHub Pages 🚀
+        runs-on: ubuntu-latest
+        concurrency:
+            group: deployment-${{ needs.addTag.outputs.build_version }}  # Group deployments by version
+            cancel-in-progress: false  # Prevent overlapping deployments for the same version
+
+        steps:
+            # Step 1: Checkout the repository
+            - name: Checkout Current Repo
+              uses: actions/checkout@v4
+              with:
+                ref: ${{ github.ref }}
+              
+            # Step 2: Download the build artifact
+            - uses: actions/download-artifact@v4
+              with:
+                  name: build-WebGL
+                  path: build
+
+            # Step 3: Deploy to GitHub Pages
+            - name: Deploy 🚀
+              uses: JamesIves/github-pages-deploy-action@v4
+              with:
+                  branch: gh-pages  # Target branch for GitHub Pages
+                  folder: build/WebGL  # Path to the WebGL build
+                  token: ${{ secrets.GH_STUDENT_PROJECT_REPO_PAT }}  # The PAT created on 24-25 Student projects repo with deploy access
+                  repository-name: ${{ vars.STUDENT_PROJECTS_REPO }}   # Target repository
+                  target-folder: "docs/q3Projects/${{ vars.TEAM_NAME }}/auto-deploy-latest"    # Target folder in which to deploy
+                  commit-message: "Auto deploy run number ${{ github.run_number }} of ${{ vars.TEAM_NAME }} WebGL from student repository ${{ github.repository }} "
+
+    # Create Draft Release for this version
+    # using https://github.com/marketplace/actions/release-drafter
+    update_release_draft:
+        needs: [buildWebGL, addTag]
+        permissions:
+        # write permission is required to create a github release
+            contents: write
+                # write permission is required for autolabeler
+                # otherwise, read permission is required at least
+            pull-requests: write
+        runs-on: ubuntu-latest
+        steps:
+            # Drafts your next Release notes as Pull Requests are merged into the branch
+            - uses: release-drafter/release-drafter@v6
+                # (Optional) specify config name to use, relative to .github/. Default: release-drafter.yml
+              with:
+                  config-name: releaseConfig.yml
+                  version: v${{ needs.addTag.outputs.build_version  }}
+                  prerelease: true
+                  #  prerelease-identifier: 'alpha'
+                  #   disable-autolabeler: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+# Update the JSON metadata file locally and then update in the central repository for proper website rendering
+    update_metadata_here:
+        name: Update the release values for this project's JSON file entry
+        needs: [update_release_draft]
+        runs-on: ubuntu-latest
+
+        outputs:
+            latest_draft_tag: ${{ steps.get_draft.outputs.draft }}
+            latest_release_tag: ${{ steps.get_release.outputs.release }}
+        
+        steps:
+        #DEBUG Step 1: Confirm the contents of the working directory
+            - name: Check dir
+              id: check_dir
+              shell: bash
+              run: |
+                  echo "this-repo-name = ${{ env.this-repo-name }}"
+                  echo "GITHUB_WORKSPACE value: "
+                  echo $GITHUB_WORKSPACE
+                  echo "Current working directory is: "
+                  pwd
+                  echo "Confirm contents of working directory..."
+                  ls -la
+                  
+        # Step 1: Checkout this repository branch to an absolute path in workspace
+            - name: Checkout THIS-Repository
+              id: checkout-this
+              uses: actions/checkout@v4
+              with:
+                  token: ${{ secrets.GITHUB_TOKEN }}
+                  path: "${{ github.workspace }}/THIS-repository"
+                  ref: ${{ github.ref }}
+                  
+        # Step 3: Get Tag of the Latest Published Release for THIS-repository
+            - name: Get Latest Published Release Tag
+              id: get_release
+              run: |
+                  API_URL="https://api.github.com/repos/${{ github.repository }}/releases/latest"
+                  RESPONSE=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" $API_URL)
+                  RELEASE=$(echo "$RESPONSE" | jq -r '.tag_name')
+                  if [ "$RELEASE" == "null" ]; then
+                      echo "No published releases found."
+                      RELEASE=""
+                  else
+                      echo "Latest published release tag: $RELEASE"
+                  fi
+                  echo "latest_release_tag=$RELEASE" >> $GITHUB_OUTPUT
+
+        # Step 4: Get Tag of the Most Recent Draft Release for THIS-repository
+            - name: Get Most Recent Draft Release
+              id: get_draft
+              run: |
+                  API_URL="https://api.github.com/repos/${{ github.repository }}/releases"
+                  RESPONSE=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" $API_URL)
+                  DRAFT=$(echo "$RESPONSE" | jq -r '.[] | select(.draft == true) | .tag_name' | head -n 1)            
+
+                  if [ -n "$DRAFT" ]; then
+                      echo "Found draft release with tag: $DRAFT"
+                      echo "latest_draft_tag=$DRAFT" >> $GITHUB_OUTPUT
+                  else
+                      echo "No draft release found."
+                      echo "latest_draft_tag=" >> $GITHUB_OUTPUT
+                  fi
+
+        # DEBUG Step 2: Confirm the contents of the working directory
+            - name: Check dir after checkout this repo
+              id: check_dir2
+              shell: bash
+              run: |
+                  echo " Environment variable this-repo-name=${{ env.this-repo-name }}"
+                  echo " Repository variable vars.PROJECT_PATH=${{ vars.PROJECT_PATH }}"
+                  echo "GITHUB_WORKSPACE value: "
+                  echo $GITHUB_WORKSPACE
+                  echo "Current working directory is: "
+                  pwd
+                  echo "Confirm contents of working directory..."
+                  ls -la       
+                  echo " ls -la THIS-repository"
+                  ls -la $GITHUB_WORKSPACE/THIS-repository
+                  echo "Confirm contents of THIS-repository Pages data files directory..."
+                  ls -la $GITHUB_WORKSPACE/THIS-repository/docs/_data
+                  # cd THIS-repository/docs/_data || { echo "Failed to navigate to THIS-repository/docs/_data."; exit 1; }
+                  # if [ ! -f projects.json ]; then
+                  #     echo "'projects.json' file not found."
+                  #     exit 1
+                  # fi
+                  echo "Current working directory is:"
+                  pwd
+                  echo "Confirm contents of working directory..."
+                  ls -la
+                  
+            - name: Modify JSON Metadata in THIS-repository
+              id: modThisJson
+              run: |
+                  echo "Switching to THIS-repository Pages data files location..."
+                  cd $GITHUB_WORKSPACE/THIS-repository/docs/_data || { echo "Failed to navigate to THIS-repository/docs/_data."; exit 1; }
+                  if [ ! -f projects.json ]; then
+                      echo "'projects.json' file not found."
+                      exit 1
+                  fi
+                  
+                  echo "Displaying JSON contents before update...."
+                  jq '.' projects.json
+                  
+                  echo "Extracting JSON entry for team: ${TEAM_NAME}..."
+                  UPDATED_ENTRY=$(jq -r --arg team "${TEAM_NAME}" \
+                      '.projects[] | select(.team_name == $team)' \
+                      projects.json 2> error.log)
+                      
+                  if [ $? -ne 0 ]; then
+                      echo "Error extracting JSON entry. Check error.log for details."
+                      cat error.log
+                      exit 1
+                  fi
+                  
+                  echo "Updating JSON metadata..."
+                  DRAFT_TAG="${{ steps.get_draft.outputs.latest_draft_tag }}"
+                  RELEASE_TAG="${{ steps.get_release.outputs.latest_release_tag }}"
+                  RELEASE_WEBGL="http://crb-gdi.github.io/24-25-Student-Projects/q3Projects/${TEAM_NAME}/$RELEASE_TAG/index.html"
+                  DRAFT_RELEASE_NOTES="https://github.com/${{ github.repository }}/releases/tag/$DRAFT_TAG"
+                  
+                  jq --arg team "${TEAM_NAME}" \
+                     --arg draft_notes "$DRAFT_RELEASE_NOTES" \
+                     --arg latest_draft "$DRAFT_TAG" \
+                     --arg latest_release "$RELEASE_TAG" \
+                     --arg webgl "$RELEASE_WEBGL" \
+                     '.projects |= map(if .team_name == $team then . + {draft_release_notes: $draft_notes, latest_draft_release_tag: $latest_draft, latest_published_release_tag: $latest_release, release_webgl: $webgl} else . end)' \
+                     projects.json > temp.json && mv temp.json projects.json
+
+                  echo "Displaying JSON contents after update...."
+                  jq '.' projects.json
+                  
+                  echo "Committing JSON changes..."
+                  cd $GITHUB_WORKSPACE/THIS-repository
+                  echo "Current working directory is..."
+                  pwd
+                  echo "Confirming contents of working directory"
+                  ls -la           
+                  echo "Reporting git status info..."
+                  git status
+                  git config --local user.name "github-actions[bot]"
+                  git config --local user.email "github-actions[bot]@users.noreply.github.com"
+                  git add docs/_data/projects.json
+                  git commit -m "Update JSON metadata for ${TEAM_NAME}" || echo "No changes to commit."
+                  git push origin ${GITHUB_REF} || echo "No changes to push."
+
+    update_metadata_there:
+        name: Update JSON Entry in External Repository
+        runs-on: ubuntu-latest
+        needs: update_metadata_here
+        
+        steps:
+        # Step 1: Checkout this repository branch to absolute path
+            - name: Checkout THIS-repository
+              id: checkout-this
+              uses: actions/checkout@v4
+              with:
+                  repository: ${{ github.repository }}
+                  token: ${{ secrets.GITHUB_TOKEN }}
+                  path: "${{ github.workspace }}/THIS-repository"
+                  ref: ${{ github.ref }}
+                      
+        # DEBUG: Confirm the contents of the working directory
+            - name: Check dir after checkout this repo
+              id: check_dir2
+              shell: bash
+              run: |
+                  echo " Environment variable this-repo-name=${{ env.this-repo-name }}"
+                  echo " Repository variable vars.PROJECT_PATH=${{ vars.PROJECT_PATH }}"
+                  echo "GITHUB_WORKSPACE value: "
+                  echo $GITHUB_WORKSPACE
+                  echo "Current working directory is: "
+                  pwd
+                  echo "Confirm contents of working directory..."
+                  ls -la       
+                  echo " ls -la THIS-repository"
+                  ls -la $GITHUB_WORKSPACE/THIS-repository
+                  echo "Switching to THIS-repository Unity project location..."
+                  ls -la $GITHUB_WORKSPACE/THIS-repository/docs/_data
+                  #cd THIS-repository/docs/_data || { echo "Failed to navigate to THIS-repository/docs/_data."; exit 1; }
+                  #if [ ! -f projects.json ]; then
+                  #    echo "'projects.json' file not found."
+                  #    exit 1
+                  #fi
+                  echo "Current working directory is:"
+                  pwd
+                  echo "Confirm contents of working directory..."
+                  ls -la
+                  
+            - name: Checkout External Repository to an absolute path
+              id: checkout-ext
+              uses: actions/checkout@v4
+              with:
+                  repository: ${{ env.EXT_REPO }}
+                  token: ${{ secrets.GH_STUDENT_PROJECT_REPO_PAT }}
+                  path: "${{ github.workspace }}/central-repository"
+                  ref: gh-pages
+
+            # DEBUG:: Confirm the contents of the working directory
+            - name: Check dir after checkout central repo
+            #    if: true == false
+              id: check_dir3
+              shell: bash
+              run: |
+                  echo "GITHUB_WORKSPACE value: "
+                  echo $GITHUB_WORKSPACE 
+                  echo "Current working directory is: "
+                  pwd
+                  echo "Confirm contents of working directory..."
+                  ls -la       
+                  echo " ls -la THIS-repository"
+                  ls -la THIS-repository
+                  echo "Current working directory is: "
+                  pwd
+                  echo "Confirm contents of working directory..."
+                  ls -la
+                  echo "Switching to central-repository..."
+                  cd $GITHUB_WORKSPACE/central-repository || { echo "Failed to navigate to central-repository"; exit 1; }
+                  echo "Current working directory is:"
+                  pwd
+                  echo "Confirming contents of working directory..."
+                  ls -la
+                  
+                  echo "Switching to central-repository/docs..."
+                  cd $GITHUB_WORKSPACE/central-repository/docs || { echo "Failed to navigate to central-repository/docs"; exit 1; }
+                  echo "Current working directory is:"
+                  pwd
+                  echo "Confirming contents of working directory..."
+                  ls -la
+                  echo "Switching to central-repository/docs/_data..."
+                  cd $GITHUB_WORKSPACE/central-repository/docs/_data || { echo "Failed to navigate to central-repository/docs/_data"; exit 1; }
+                  echo "Current working directory is:"
+                  pwd
+                  echo "Confirming contents of working directory..."
+                  ls -la
+            # Update the updated JSON metadata entry into the Central Repository's JSON file
+            - name: Update JSON Entry in External Repository
+              run: | 
+                  # Debugging step: List directory contents 
+                  echo "Checking directory contents at $GITHUB_WORKSPACE..."
+                  ls -la $GITHUB_WORKSPACE
+                  echo "Checking directory contents at $GITHUB_WORKSPACE..."
+                  ls -la $GITHUB_WORKSPACE
+                  
+                  echo "Looking for 'THIS-repository' inside the workspace..."
+                  ls -la $GITHUB_WORKSPACE/THIS-repository
+                  
+                  echo "Switching context to THIS-repository pages data location..."
+                  cd $GITHUB_WORKSPACE/THIS-repository/docs/_data || { echo "Failed to navigate to THIS-repository/docs/_data."; exit 1; }
+                  if [ ! -f projects.json ]; then
+                      echo "'projects.json' file not found in THIS-repository."
+                      exit 1
+                  fi
+                  
+                  echo "Extracting entry for team: ${TEAM_NAME}..."
+                  UPDATED_ENTRY=$(jq -r --arg team "${TEAM_NAME}" \
+                      '.projects[] | select(.team_name == $team)' \
+                      projects.json 2> error.log)
+                  
+                  if [ $? -ne 0 ]; then
+                      echo "Error extracting JSON entry. Check error.log for details."
+                      cat error.log
+                      exit 1
+                  fi
+                  
+                  # Debugging step: List directory contents
+                  echo "Checking directory contents at $GITHUB_WORKSPACE/central-repository..."
+                  ls -la $GITHUB_WORKSPACE/central-repository
+                  
+                  echo "Switching to central-repository..."
+                  cd $GITHUB_WORKSPACE/central-repository || { echo "Failed to navigate to central-repository"; exit 1; }
+                  echo "Current working directory is:"
+                  pwd
+                  echo "Confirming contents of working directory..."
+                  ls -la
+                  
+                  echo "Switching to central-repository/docs..."
+                  cd $GITHUB_WORKSPACE/central-repository/docs || { echo "Failed to navigate to central-repository/doc"; exit 1; }
+                  echo "Current working directory is:"
+                  pwd
+                  echo "Confirming contents of working directory..."
+                  ls -la
+                  
+                  echo "Switching to central-repository/docs/_data..."
+                  cd $GITHUB_WORKSPACE/central-repository/docs/_data || { echo "Failed to navigate to central-repository/docs/_data"; exit 1; }
+                  echo "Current working directory is:"
+                  pwd
+                  echo "Confirming contents of working directory..."
+                  ls -la
+                  
+                  if [ ! -f projects.json ]; then
+                      echo "'projects.json' file not found in central-repository."
+                      exit 1
+                  fi
+                  
+                  echo "Displaying central-repository JSON contents before update...."
+                  jq '.' projects.json
+                  
+                  echo "Updating entry for team: ${TEAM_NAME} in central-repository..."
+                  jq --argjson updated "$UPDATED_ENTRY" \
+                     --arg team "${TEAM_NAME}" \
+                     '.projects |= map(if .team_name == $team then $updated else . end)' \
+                     projects.json > temp.json && mv temp.json projects.json
+                 
+                  echo "Displaying central-repository JSON contents after update...."                 
+                  jq '.' projects.json
+                  
+                  echo "Committing JSON changes..."
+                  cd $GITHUB_WORKSPACE/central-repository
+                  echo "Checking Git hub status"
+                  git status
+                  git config --local user.name "github-actions[bot]"
+                  git config --local user.email "github-actions[bot]@users.noreply.github.com"
