@@ -5,25 +5,8 @@ This project supports two deployment architectures:
 ---
 
 ## **1. Single-Repository Deployment (Portfolio Demo)**
-(replace below with a prettier viso-type image)
-![Image depicting the workflow for a single-repository deployment](docs/assets/SingleRepoDeployment.png)
-Unity Project Repo
 
-|
-
-|
-
-GitHub Actions Build
-
-|
-
-▼
-
-gh-pages Branch
-
-|
-
-GitHub Pages Hosting
+![Image depicting the workflow for a single-repository deployment](/docs/assets/SingleRepoDeployment.png)
 
 **Key Points:**
 - Simplest to maintain  
@@ -33,19 +16,7 @@ GitHub Pages Hosting
 ---
 
 ## **2. Cross-Repository Deployment (Classroom Pattern)**
-(replace below with a prettier image)
-Private Student Repo
-(Unity Project + Workflow)
-│
-▼
-GitHub Actions Build
-│
-▼
-WebGL Build Artifacts
-│
-▼
-Public Build Repository
-(GitHub Pages site)
+![Image depicting the workflow for a single-repository deployment](/docs/assets/CrossRepoDeployment.png)
 
 **Why this pattern?**
 - Keeps student code private  
