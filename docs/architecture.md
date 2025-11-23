@@ -6,14 +6,23 @@ This project supports two deployment architectures:
 
 ## **1. Single-Repository Deployment (Portfolio Demo)**
 (replace below with a prettier viso-type image)
+![Image depicting the workflow for a single-repository deployment](docs/assets/SingleRepoDeployment.png)
 Unity Project Repo
+
 |
+
 |
+
 GitHub Actions Build
+
 |
+
 ▼
+
 gh-pages Branch
+
 |
+
 GitHub Pages Hosting
 
 **Key Points:**
